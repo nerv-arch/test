@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>UTC 기준 이벤트 시작/종료일</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#fff; --fg:#222; --muted:#666; --line:#e7e7e7; --primary:#111; --chip:#f5f5f7;}
+    body{font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:760px;margin:36px auto;padding:0 16px;background:var(--bg);color:var(--fg);line-height:1.5}
+    h1{font-size:22px;margin:0 0 8px}
+    p.desc{color:var(--muted);margin:0 0 16px}
+    .card{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-top:14px;box-shadow:0 4px 8px rgba(0,0,0,.03)}
+    .step{margin:8px 0 14px}
+    .step h3{margin:0 0 6px;font-size:15px}
+    label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
+    input,select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #ccc;border-radius:10px;font-size:14px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .row>div{flex:1 1 200px}
+    .result{margin-top:14px;padding:16px;border:1px solid var(--line);border-radius:10px;background:#fafafa;font-size:14px}
+    .zone{background:var(--chip);border-radius:10px;padding:10px 12px;margin:8px 0;border:1px solid #ececec}
+    .zone h4{margin:0 0 6px;font-size:14px}
+    .line{display:flex;gap:8px;align-items:center;margin:4px 0}
+    .label{min-width:48px;color:#555}
+    .value{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+    .note{color:var(--muted);font-size:12px;margin-top:8px}
+    button{margin-top:6px;background:var(--primary);color:#fff;border:0;border-radius:999px;padding:10px 16px;font-weight:700;cursor:pointer}
+    .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .ghost{background:#fff;border:1px solid var(--line);color:#111}
+    .err{color:#b00020}
+  </style>
+</head>
+<body>
+  <h1>UTC 기준 이벤트 시작/종료일</h1>
+  <p class="desc">3단계 입력 완료 후 버튼을 누르면, 요청하신 포맷(<b>KST / UTC(서버) / PDT</b>)으로 보기 좋게 출력합니다.</p>
+
+  <div class="card">
+    <!-- 1단계: 시작일 설정 -->
+    <div class="step">
+      <h3>1단계 · 시작일 설정</h3>
+      <label for="startDate">시작일 (KST, 날짜)</label>
+      <input id="startDate" type="date" />
+    </div>
+
+    <!-- 2단계: 운영 기간 입력 (단위 선택) -->
+    <div class="step">
+      <h3>2단계 · 운영 기간 입력</h3>
+      <div class="row">
+        <div>
+          <label for="durationValue">기간 값</label>
+          <input id="durationValue" type="number" min="0" step="1" value="0" placeholder="예: 3" />
+        </div>
+        <div>
+          <label for="durationUnit">단위</label>
+          <select id="durationUnit">
+            <option value="days" selected>일 단위</option>
+            <option value="hours">시간 단위</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3단계: 시작 시간 입력 -->
+    <div class="step">
+      <h3>3단계 · 시작 시간 입력</h3>
+      <label for="startTime">시작 시간 (KST)</label>
+      <input id="startTime" type="time" value="16:00" />
+    </div>
+
+    <div class="btns">
+      <button id="calcBtn" type="button">결과 산출</button>
+      <button id="copyBtn" class="ghost" type="button">전체 복사</button>
+    </div>
+
+    <div id="output" class="result"></div>
+
+    <div class="note">
+      · 입력은 한국시간(KST, UTC+9)으로 간주하여 UTC/미국 PT로 변환합니다. PT는 계절에 따라 PDT/PST로 자동 표기됩니다.<br/>
+      · 종료 일시는 <b>시작 시각 + 운영 기간</b>으로 계산됩니다. 표기 형식은 <code>YYYY-MM-DD HH:mm:ss</code>.
+    </div>
+  </div>
+
+  <script>
+    function pad(n){return String(n).padStart(2,'0')}
+    function parseKSTtoUTC(dateStr,timeStr){
+      if(!dateStr || !timeStr) return null
+      const [y,m,d] = dateStr.split('-').map(Number)
+      const [hh,mm] = timeStr.split(':').map(Number)
+      return new Date(Date.UTC(y,(m-1),d, hh-9, mm, 0))
+    }
+    function addDuration(date, value, unit){
+      const v = (Number.isFinite(value) ? value : 0)
+      const ms = (unit==='days') ? (v*24*60*60*1000) : (v*60*60*1000)
+      return new Date(date.getTime() + ms)
+    }
+    function fmt(dt, tz){
+      const z = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit',
+        hour12:false
+      }).formatToParts(dt).reduce((acc,p)=>{acc[p.type]=p.value; return acc}, {})
+      return `${z.year}-${z.month}-${z.day} ${z.hour}:${z.minute}:${z.second}`
+    }
+    function showError(msg){
+      const out = document.getElementById('output')
+      out.innerHTML = '<div class="err">⚠️ ' + msg + '</div>'
+    }
+    function block(title, start, end){
+      return `
+        <div class="zone">
+          <h4><strong>${title}</strong></h4>
+          <div class="line"><div class="label">시작</div><div class="value">${start}</div></div>
+          <div class="line"><div class="label">종료</div><div class="value">${end}</div></div>
+        </div>
+      `
+    }
+    function calc(){
+      try{
+        const startDate = document.getElementById('startDate').value
+        const durationValue = Number(document.getElementById('durationValue').value || 0)
+        const durationUnit  = document.getElementById('durationUnit').value
+        const startTime = document.getElementById('startTime').value
+        const out = document.getElementById('output')
+
+        if(!startDate){ return showError('시작일을 입력하세요.') }
+        if(!startTime){ return showError('시작 시간을 입력하세요.') }
+
+        const utcStart = parseKSTtoUTC(startDate, startTime)
+        if(!utcStart || isNaN(utcStart.getTime())){ return showError('입력 형식이 올바르지 않습니다.') }
+        const utcEnd   = addDuration(utcStart, durationValue, durationUnit)
+
+        const kstStart = fmt(utcStart, 'Asia/Seoul')
+        const kstEnd   = fmt(utcEnd,   'Asia/Seoul')
+        const utcStartStr = fmt(utcStart, 'UTC')
+        const utcEndStr   = fmt(utcEnd,   'UTC')
+        const ptStart  = fmt(utcStart, 'America/Los_Angeles')
+        const ptEnd    = fmt(utcEnd,   'America/Los_Angeles')
+
+        const html = [
+          block('KST', kstStart, kstEnd),
+          block('UTC (서버)', utcStartStr, utcEndStr),
+          block('PDT (미국 기준 운영일)', ptStart, ptEnd)
+        ].join('')
+
+        out.innerHTML = html
+      }catch(e){
+        showError('예상치 못한 오류: ' + (e && e.message ? e.message : e))
+        console.error(e)
+      }
+    }
+
+    function copyAll(){
+      const output = document.getElementById('output')
+      const text = output.innerText.trim()
+      if(!text){ return }
+      navigator.clipboard.writeText(text).then(()=>{
+        const prev = output.innerHTML
+        output.innerHTML = prev + '<div class="note">✅ 복사 완료</div>'
+        setTimeout(()=>{ output.innerHTML = prev }, 1200)
+      }).catch(()=>{})
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', calc)
+    document.getElementById('copyBtn').addEventListener('click', copyAll)
+
+    ;['startDate','durationValue','durationUnit','startTime'].forEach(id=>{
+      document.getElementById(id).addEventListener('change', ()=>{
+        const sd = document.getElementById('startDate').value
+        const st = document.getElementById('startTime').value
+        if(sd && st){ calc() }
+      })
+    })
+  </script>
+
+<script>
+  function todayKSTDateString(){
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date()).reduce((a,p)=>{a[p.type]=p.value; return a;}, {});
+    return `${parts.year}-${parts.month}-${parts.day}`; // YYYY-MM-DD
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const sd = document.getElementById('startDate');
+    const st = document.getElementById('startTime');
+    if(sd && !sd.value){
+      sd.value = todayKSTDateString();   // 시작일 디폴트를 오늘(KST)로
+    }
+    // 시작일과 시작 시간이 모두 있으면 즉시 계산
+    if(sd && sd.value && st && st.value){
+      try { calc(); } catch(e) {}
+    }
+  });
+</script>
+
+<script>
+  // --- Auto-calc (no button needed) ---
+  (function(){
+    function debounce(fn, ms){
+      let t; 
+      return function(...args){
+        clearTimeout(t);
+        t = setTimeout(()=>fn.apply(this,args), ms);
+      };
+    }
+    function safeCalc(){
+      try { if (typeof calc === 'function') calc(); } catch(e) {}
+    }
+    const debouncedCalc = debounce(safeCalc, 200);
+
+    document.addEventListener('DOMContentLoaded', function(){
+      // 1) 즉시 1회 계산 (초기값 반영)
+      safeCalc();
+
+      // 2) 모든 입력 요소 변화에 자동 계산 연결
+      const inputs = Array.from(document.querySelectorAll('input, select, textarea'));
+      inputs.forEach(el=>{
+        el.addEventListener('input', debouncedCalc);
+        el.addEventListener('change', debouncedCalc);
+      });
+
+      // 3) "결과 산출" 버튼 숨기기/비활성화 시도
+      const maybeButtons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+      maybeButtons.forEach(btn=>{
+        const txt = (btn.textContent || btn.value || '').trim();
+        const id  = (btn.id || '').toLowerCase();
+        const hasCalcOnClick = (btn.getAttribute && (btn.getAttribute('onclick')||'')).includes('calc(') 
+                            || (typeof btn.onclick === 'function' && String(btn.onclick).includes('calc'));
+        const looksLikeCalc = /calc|result|계산|결과|산출/i.test(txt) || /calc|result|계산|결과|산출/i.test(id);
+        if(hasCalcOnClick || looksLikeCalc){
+          btn.disabled = true;
+          btn.style.display = 'none';
+        }
+      });
+    });
+  })();
+</script>
+</body>
+</html>
